@@ -371,6 +371,12 @@ textarea { resize: vertical; min-height: 70px; }
 /* GENERATE BTN */
 .btn-wrap { margin-top: 20px; }
 
+.btn-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
 .btn-gen {
   width: 100%;
   background: linear-gradient(135deg, var(--red) 0%, #a00 100%);
@@ -390,6 +396,26 @@ textarea { resize: vertical; min-height: 70px; }
 .btn-gen:hover { background: linear-gradient(135deg, var(--red2), #c00); }
 .btn-gen:active { transform: scale(0.99); }
 .btn-gen:disabled { background: var(--dark4); color: var(--muted); cursor: not-allowed; }
+
+.btn-manual {
+  background: var(--dark3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--yellow);
+  cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  padding: 12px;
+  text-transform: uppercase;
+  transition: all 0.2s;
+}
+
+.btn-manual:hover {
+  border-color: var(--yellow);
+  background: rgba(255,208,0,0.06);
+}
 
 .btn-gen .shine {
   position: absolute;
@@ -816,10 +842,15 @@ textarea { resize: vertical; min-height: 70px; }
 
       <!-- GENERATE -->
       <div class="btn-wrap">
-        <button class="btn-gen" onclick="generate()" id="genBtn">
-          <span class="shine"></span>
-          🏁 GERAR SEQUÊNCIA VEO 3
-        </button>
+        <div class="btn-grid">
+          <button class="btn-gen" onclick="generate()" id="genBtn">
+            <span class="shine"></span>
+            🏁 GERAR SEQUÊNCIA VEO 3
+          </button>
+          <button class="btn-manual" onclick="generate(true)" id="manualBtn">
+            Copiar prompt grátis para IA
+          </button>
+        </div>
       </div>
 
     </div>
@@ -1119,7 +1150,7 @@ function toggleClip(i) {
 }
 
 // ── GENERATE ────────────────────────────────────────────────
-async function generate() {
+async function generate(manualOnly = false) {
   const pilot = document.getElementById('pilot').value.trim();
   const pilotVeo = document.getElementById('pilotVeo').value.trim() || pilot;
   const season = document.getElementById('season').value.trim();
@@ -1131,8 +1162,10 @@ async function generate() {
   if(!pilot) { alert('Coloca o nome do piloto!'); return; }
 
   const btn = document.getElementById('genBtn');
+  const manualBtn = document.getElementById('manualBtn');
   btn.disabled = true;
-  document.getElementById('loading').classList.add('show');
+  manualBtn.disabled = true;
+  if (!manualOnly) document.getElementById('loading').classList.add('show');
   document.getElementById('results').classList.remove('show');
 
   const msgs = ['Escrevendo roteiro...','Criando prompts Veo 3...','Montando hooks...','Quase lá...'];
@@ -1297,6 +1330,15 @@ REGRAS PARA CADA CLIPE:
 
 CONTINUIDADE: Os 5 clipes devem contar UMA história contínua. O Veo 3 prompt de cada clipe deve referenciar visualmente o anterior para a IA não perder o fio.`;
 
+  const manualPrompt = buildManualPrompt(systemPrompt, userPrompt);
+
+  if (manualOnly) {
+    renderManualPrompt(manualPrompt, pilot, season, epNum, arcLabels[arcType], 'manual');
+    btn.disabled = false;
+    manualBtn.disabled = false;
+    return;
+  }
+
   try {
     const res = await fetch("/api/generate", {
       method:"POST",
@@ -1325,13 +1367,39 @@ CONTINUIDADE: Os 5 clipes devem contar UMA história contínua. O Veo 3 prompt d
     renderResults(parsed, pilot, season, epNum, arcLabels[arcType]);
 
   } catch(err) {
-    alert('Erro: ' + err.message);
     console.error(err);
+    renderManualPrompt(manualPrompt, pilot, season, epNum, arcLabels[arcType], err.message);
   } finally {
     clearInterval(loadInt);
     btn.disabled = false;
+    manualBtn.disabled = false;
     document.getElementById('loading').classList.remove('show');
   }
+}
+
+function buildManualPrompt(systemPrompt, userPrompt) {
+  return `Você vai gerar roteiros e prompts para vídeos Veo 3.
+
+Responda APENAS com JSON válido, sem markdown, sem explicação fora do JSON.
+Use exatamente esta estrutura:
+{
+  "hooks": ["hook 1", "hook 2", "hook 3", "hook 4", "hook 5"],
+  "clipes": [
+    {
+      "numero": 1,
+      "titulo": "TITULO CURTO",
+      "veo3_prompt": "prompt completo em ingles para Veo 3",
+      "narracao": "narracao PT-BR curta com hook"
+    }
+  ],
+  "caption_tiktok": "caption completa com hashtags"
+}
+
+SISTEMA:
+${systemPrompt}
+
+PEDIDO:
+${userPrompt}`;
 }
 
 // ── CLIP DATA STORE (evita injeção de texto em onclick) ────
@@ -1345,6 +1413,71 @@ function copyByKey(key, btn) {
     btn.classList.add('ok');
     setTimeout(() => { btn.textContent = 'Copiar'; btn.classList.remove('ok'); }, 2000);
   });
+}
+
+function renderManualPrompt(promptText, pilot, season, epNum, arc, reason) {
+  Object.keys(clipStore).forEach(k => delete clipStore[k]);
+  clipStore['manual_prompt'] = promptText;
+
+  document.getElementById('resultTitle').textContent =
+    `PROMPT IA · ${pilot.toUpperCase()}`;
+  document.getElementById('resultMeta').textContent =
+    `${season || 'Temporada livre'} · ${arc} · modo grátis`;
+
+  const hcList = document.getElementById('hookChain');
+  hcList.innerHTML = '';
+  [
+    'Prompt mestre pronto para copiar',
+    'Resposta esperada: JSON com 5 hooks, 5 clipes e caption',
+    'Prompts finais entram no Veo 3'
+  ].forEach((h, i) => {
+    const item = document.createElement('div');
+    item.className = 'hc-item';
+    item.innerHTML = `<div class="hc-num">${i+1}→</div><div class="hc-text"></div>`;
+    item.querySelector('.hc-text').textContent = h;
+    hcList.appendChild(item);
+  });
+
+  const container = document.getElementById('clipsContainer');
+  container.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'clip-card';
+  card.innerHTML = `
+    <div class="clip-header">
+      <div class="clip-num-badge">
+        <div class="clip-number cn-2">${String(epNum).padStart(2,'0')}</div>
+        <div class="clip-title-info">
+          <div class="clip-title-text">PROMPT MESTRE PARA IA</div>
+          <div class="clip-duration">Copa Pistão · Veo 3 · JSON</div>
+        </div>
+      </div>
+      <button class="clip-toggle-btn" onclick="copyByKey('manual_prompt', this)">Copiar</button>
+    </div>
+    <div class="clip-body open">
+      <div class="prompt-block">
+        <div class="pb-label">
+          <span class="pb-tag">Prompt completo</span>
+          <button class="pb-copy" onclick="copyByKey('manual_prompt', this)">Copiar</button>
+        </div>
+        <div class="pb-content veo" id="manualPromptContent"></div>
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+  document.getElementById('manualPromptContent').textContent = promptText;
+
+  clipStore['caption'] = reason && reason !== 'manual'
+    ? `Fallback ativado: ${reason}`
+    : 'Modo grátis: prompt mestre pronto para copiar.';
+  document.getElementById('captionContent').textContent = clipStore['caption'];
+
+  const captionCopyBtn = document.querySelector('[onclick="copyEl(\'captionContent\', this)"]');
+  if (captionCopyBtn) {
+    captionCopyBtn.setAttribute('onclick', "copyByKey('caption', this)");
+  }
+
+  document.getElementById('results').classList.add('show');
+  document.getElementById('results').scrollIntoView({ behavior:'smooth', block:'start' });
 }
 
 // ── RENDER ────────────────────────────────────────────────
