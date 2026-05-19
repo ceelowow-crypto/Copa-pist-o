@@ -1298,14 +1298,12 @@ REGRAS PARA CADA CLIPE:
 CONTINUIDADE: Os 5 clipes devem contar UMA história contínua. O Veo 3 prompt de cada clipe deve referenciar visualmente o anterior para a IA não perder o fio.`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("/api/generate", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
-        model:"claude-sonnet-4-20250514",
-        max_tokens:4000,
         system: systemPrompt,
-        messages:[{role:"user", content: userPrompt}]
+        userPrompt
       })
     });
 
