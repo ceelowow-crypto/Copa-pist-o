@@ -1,5 +1,36 @@
-const ANTHROPIC_VERSION = '2023-06-01';
-const ANTHROPIC_MODEL = 'claude-sonnet-4-20250514';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+
+const SCRIPT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['hooks', 'clipes', 'caption_tiktok'],
+  properties: {
+    hooks: {
+      type: 'array',
+      minItems: 5,
+      maxItems: 5,
+      items: { type: 'string' }
+    },
+    clipes: {
+      type: 'array',
+      minItems: 5,
+      maxItems: 5,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['numero', 'titulo', 'veo3_prompt', 'narracao'],
+        properties: {
+          numero: { type: 'integer', minimum: 1, maximum: 5 },
+          titulo: { type: 'string' },
+          veo3_prompt: { type: 'string' },
+          narracao: { type: 'string' }
+        }
+      }
+    },
+    caption_tiktok: { type: 'string' }
+  }
+};
 
 async function readJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -10,6 +41,19 @@ async function readJsonBody(req) {
   for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString('utf8');
   return raw ? JSON.parse(raw) : {};
+}
+
+function extractOutputText(data) {
+  if (typeof data.output_text === 'string') return data.output_text;
+
+  const textParts = [];
+  for (const item of data.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === 'string') textParts.push(content.text);
+    }
+  }
+
+  return textParts.join('');
 }
 
 module.exports = async function handler(req, res) {
@@ -23,11 +67,11 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: { message: 'Metodo nao permitido.' } });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return res.status(500).json({
       error: {
-        message: 'ANTHROPIC_API_KEY nao configurada no Vercel.'
+        message: 'OPENAI_API_KEY nao configurada no Vercel.'
       }
     });
   }
@@ -43,28 +87,48 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    const openaiRes = await fetch(OPENAI_RESPONSES_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': ANTHROPIC_VERSION
+        Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 4000,
-        system,
-        messages: [{ role: 'user', content: userPrompt }]
+        model: OPENAI_MODEL,
+        instructions: system,
+        input: userPrompt,
+        max_output_tokens: 4000,
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'copa_pistao_script',
+            strict: true,
+            schema: SCRIPT_SCHEMA
+          }
+        }
       })
     });
 
-    const data = await anthropicRes.json();
+    const data = await openaiRes.json();
 
-    if (!anthropicRes.ok) {
-      return res.status(anthropicRes.status).json(data);
+    if (!openaiRes.ok) {
+      return res.status(openaiRes.status).json(data);
     }
 
-    return res.status(200).json(data);
+    const text = extractOutputText(data);
+    if (!text) {
+      return res.status(502).json({
+        error: {
+          message: 'A OpenAI nao retornou texto de roteiro.'
+        }
+      });
+    }
+
+    return res.status(200).json({
+      content: [{ text }],
+      model: data.model || OPENAI_MODEL,
+      id: data.id
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({
